@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Autotrade 6.0 — Paper Control</title>
+  <title>Autotrade 6.1 Paper Control</title>
   <style>
     @font-face{font-family:'Open Sans';src:url('/assets/OpenSans.ttf') format('truetype');font-style:normal;font-weight:300 800;font-display:swap}
     :root{color-scheme:dark;--bg:#080c12;--panel:#101720;--line:#2b3b4b;--text:#f1f5fa;--muted:#acb8c5;--cyan:#63efd1;--green:#61e697;--yellow:#ffd060;--red:#ff7185;--blue:#80b1ff;font:15px/1.45 'Open Sans',sans-serif}
@@ -25,14 +25,14 @@
 <body>
 <main class="shell">
   <header class="top">
-    <div class="brand">AUTOTRADE <span>6.0</span></div>
+    <div class="brand">AUTOTRADE <span>6.1</span></div>
     <div id="status" class="status"><span class="dot"></span><span>OFFLINE</span></div>
     <div class="paper">PAPER TRADING · REAL ORDERS DISABLED</div>
   </header>
 
   <section class="grid metrics" aria-label="Primary metrics">
     <article class="metric"><div class="label">Equity</div><div class="value" id="equity">—</div><div class="sub" id="available">— available</div></article>
-    <article class="metric"><div class="label">Today</div><div class="value" id="dailyPnl">—</div><div class="sub">3% aspiration · never a quota</div></article>
+    <article class="metric"><div class="label">Today</div><div class="value" id="dailyPnl">—</div><div class="sub">Observed paper P&amp;L</div></article>
     <article class="metric"><div class="label">Total P&amp;L</div><div class="value" id="totalPnl">—</div><div class="sub" id="unrealized">— unrealized</div></article>
     <article class="metric"><div class="label">Drawdown</div><div class="value" id="drawdownTop">—</div><div class="sub">from observed equity peak</div></article>
     <article class="metric"><div class="label">Open Trades</div><div class="value" id="openCount">—</div><div class="sub">maximum one in bootstrap</div></article>
@@ -77,12 +77,16 @@
         <div class="panel-head"><h2>Opportunity scanner</h2><span class="tag">Native pairlist + analyzed candles</span></div>
         <div class="scroll"><table><thead><tr><th>Pair</th><th>Score</th><th>Volatility</th><th>Liquidity</th><th>Spread</th><th>Regime</th><th>Strategy</th><th>Eligibility</th></tr></thead><tbody id="opportunities"></tbody></table></div>
       </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Pair safety</h2><span class="tag">Entry authorization</span></div>
+        <div class="scroll"><table><thead><tr><th>Pair</th><th>Gate</th><th>Data</th><th>Continuity</th><th>Reason</th></tr></thead><tbody id="pairSafety"></tbody></table></div>
+      </section>
     </div>
 
     <aside>
       <section class="panel">
         <div class="panel-head"><h2>Strategy</h2><span class="tag" id="regime">UNKNOWN</span></div>
-        <div class="kv"><div>Champion</div><div id="champion">—</div><div>Active</div><div id="strategy">—</div><div>Challenger</div><div id="challenger">—</div><div>Confidence</div><div>INSUFFICIENT DATA</div><div>Profile</div><div>PAPER BOOTSTRAP</div></div>
+        <div class="kv"><div>Champion</div><div id="champion">—</div><div>Active</div><div id="strategy">—</div><div>Challenger</div><div id="challenger">—</div><div>Evidence</div><div>UNVALIDATED RESEARCH STRATEGY</div><div>Profile</div><div>PAPER BOOTSTRAP</div></div>
       </section>
       <section class="panel">
         <div class="panel-head"><h2>System health</h2><span class="tag" id="lastAudit">No audit</span></div>
@@ -121,6 +125,7 @@
     const quotes=state.opportunities.filter(o=>Number(o.current_price)>0),items=quotes.map(o=>{const change=Number(o.price_change||0),symbol=String(o.pair).replace('/USDT:USDT','');return `<span class="tape-item"><span class="tape-symbol">${esc(symbol)}</span><span class="tape-price">${esc(price(o.current_price))}</span><span class="${change<0?'negative':'positive'}">${change<0?'▼':'▲'} ${esc(pct(Math.abs(change)))}</span></span>`}).join('');$('marketTape').innerHTML=items?`<span class="tape-set">${items}</span><span class="tape-set" aria-hidden="true">${items}</span>`:'<span class="tick-meta">Waiting for market prices</span>';
     $('trades').innerHTML=state.open_trades.length?state.open_trades.map(t=>`<tr><td class="pair">${esc(t.pair)}</td><td>${esc(t.is_short?'SHORT':'LONG')}</td><td>${esc(t.strategy||state.active_strategy)}</td><td>${esc(price(t.open_rate))}</td><td>${esc(price(t.current_rate))}</td><td class="${Number(t.net_profit_abs)<0?'negative':'positive'}">${esc(money(t.net_profit_abs))}</td><td title="${esc(t.fee_source)}">${esc(money(t.estimated_trading_fee_abs))}</td><td>${esc(t.leverage||1)}×</td><td>${esc(price(t.stop_loss_abs||t.stop_loss))}</td><td title="Fee-aware ROI target ${esc(pct(t.take_profit_roi))}">${esc(price(t.take_profit_rate))} · ${esc(pct(t.take_profit_roi))}</td><td>${esc(t.is_open?'OPEN':'CLOSED')}</td></tr>`).join(''):tableEmpty(11,'No open paper trades');
     $('opportunities').innerHTML=state.opportunities.length?state.opportunities.map(o=>`<tr><td class="pair">${esc(o.pair)}</td><td>${esc(Number(o.score).toFixed(1))}</td><td>${esc(pct(o.volatility))}</td><td>${esc(pct(o.liquidity))}</td><td>${o.spread==null?'Filtered upstream':esc(pct(o.spread))}</td><td>${esc(o.regime)}</td><td>${esc(o.preferred_strategy)}</td><td class="${o.eligible?'eligible':'blocked'}">${o.eligible?'ELIGIBLE':'BLOCKED'}</td></tr>`).join(''):tableEmpty(8,'Waiting for authenticated Freqtrade analyzed candles');
+    const pairs=state.pair_decisions||{};$('pairSafety').innerHTML=Object.keys(pairs).length?Object.values(pairs).map(p=>`<tr><td class="pair">${esc(p.pair)}</td><td class="${p.entry_allowed?'eligible':'blocked'}">${p.entry_allowed?'ALLOWED':'DENIED'}</td><td>${esc(p.data_status)}</td><td>${p.continuity_ok?'VERIFIED':'UNVERIFIED'}</td><td>${esc((p.reasons||[]).join(', '))}</td></tr>`).join(''):tableEmpty(5,'No verified whitelist decisions yet');
     $('health').innerHTML=Object.entries(state.components).map(([name,value])=>`<div class="health-item"><span>${esc(name.replaceAll('_',' '))}</span><span class="health-state ${esc(value)}">${esc(value)}</span></div>`).join('')+`<div class="health-item"><span>loop checks</span><span class="health-state HEALTHY">${esc(state.health_loop_count)} · every ${esc(state.health_loop_interval_seconds)}s</span></div>`;
     $('audit').innerHTML=audit.events.length?audit.events.slice(0,8).map(e=>`<div class="audit-event"><time>${esc(new Date(e.timestamp).toLocaleString())}</time><b>${esc(e.event)}</b><span>${esc(e.reason)}</span></div>`).join(''):'<div class="empty">No audit events</div>';drawChart(equity.history)
   }

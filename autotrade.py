@@ -6,7 +6,6 @@ Freqtrade remains the trading engine.  This process only supervises it.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -17,13 +16,12 @@ import shutil
 import sqlite3
 import threading
 import time
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
@@ -157,7 +155,9 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.refresh_lock = threading.RLock()
+        self.thread: threading.Thread | None = None
         with self.lock:
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
             if version > 1:
@@ -313,28 +313,56 @@ class RiskGovernor:
         return round(max(1.0, min(float(requested), cap)), 2)
 
 
+@dataclass(frozen=True)
+class PairDecision:
+    pair: str
+    entry_allowed: bool
+    reasons: tuple[str, ...]
+    candle_timestamp: str | None = None
+    candle_age_seconds: float | None = None
+    continuity_ok: bool = False
+    data_status: str = DataHealth.RECOVERING
+
+
+@dataclass(frozen=True)
+class SafetyDecision:
+    global_entry_allowed: bool
+    global_reasons: tuple[str, ...]
+    risk_state: str
+    risk_fraction: float
+    leverage_cap: float
+    generated_at: str
+    valid_until_epoch: float
+    pair_decisions: dict[str, PairDecision]
+
+
 class FreqtradeClient:
+    """Narrow adapter around the official Freqtrade REST client."""
     def __init__(self, base_url: str, timeout: float):
-        self.base_url = base_url.rstrip("/") + "/api/v1"
-        self.timeout = timeout
-        self.username = os.getenv("FREQTRADE__API_SERVER__USERNAME", "")
-        self.password = os.getenv("FREQTRADE__API_SERVER__PASSWORD", "")
+        from freqtrade_client.ft_rest_client import FtRestClient
+
+        self.client = FtRestClient(
+            base_url.rstrip("/") + "/api/v1",
+            os.getenv("FREQTRADE__API_SERVER__USERNAME", ""),
+            os.getenv("FREQTRADE__API_SERVER__PASSWORD", ""),
+            timeout=timeout,
+        )
 
     def request(self, path: str, method: str = "GET", params: dict[str, Any] | None = None) -> Any:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        if params:
-            url += "?" + urlencode(params)
-        headers = {"Accept": "application/json"}
-        if self.username or self.password:
-            raw = f"{self.username}:{self.password}".encode()
-            headers["Authorization"] = "Basic " + base64.b64encode(raw).decode()
-        data = b"{}" if method != "GET" else None
-        if data is not None:
-            headers["Content-Type"] = "application/json"
+        methods = {
+            "ping": self.client.ping, "health": self.client.health, "balance": self.client.balance,
+            "profit": self.client.profit, "status": self.client.status, "whitelist": self.client.whitelist,
+            "start": self.client.start, "stop": self.client.stop, "stopbuy": self.client.stopbuy,
+        }
         try:
-            with urlopen(Request(url, data=data, headers=headers, method=method), timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            if path == "daily":
+                return self.client.daily((params or {}).get("timescale"))
+            if path == "trades":
+                return self.client.trades((params or {}).get("limit"), (params or {}).get("offset"))
+            if path == "pair_candles":
+                return self.client.pair_candles((params or {})["pair"], (params or {})["timeframe"], (params or {}).get("limit"))
+            return methods[path]()
+        except Exception as exc:
             raise RuntimeError(f"Freqtrade {method} {path} failed: {type(exc).__name__}") from exc
 
 
@@ -470,10 +498,13 @@ class Supervisor:
 
     def start(self) -> None:
         self.store.audit("BOT_STARTED", "Supervisor process started", new="STARTING")
-        threading.Thread(target=self._loop, name="autotrade-supervisor", daemon=True).start()
+        self.thread = threading.Thread(target=self._loop, name="autotrade-supervisor", daemon=True)
+        self.thread.start()
 
     def stop(self) -> None:
         self.stop_event.set()
+        if self.thread and self.thread is not threading.current_thread():
+            self.thread.join(timeout=max(2.0, self.config["heartbeat_seconds"] + 1.0))
         self._write_runtime(False, RiskState.HALTED, 0.0, 1.0, "Supervisor stopped")
         self.store.audit("BOT_STOPPED", "Supervisor process stopped", previous=str(self.state["bot_status"]), new="OFFLINE")
 
@@ -500,17 +531,23 @@ class Supervisor:
         self._write_runtime(False, RiskState.HALTED, 0.0, 1.0, reason)
 
     def refresh(self) -> None:
+        with self.refresh_lock:
+            self._refresh()
+
+    def _refresh(self) -> None:
         now = utc_now()
         self.health_loop_count += 1
         components = {"health_loop": "HEALTHY", "supervisor": "HEALTHY", "audit": "HEALTHY", "paper_safety": "HEALTHY"}
         ft_ok = False
         try:
-            ft_ok = self.ft.request("ping").get("status") == "pong"
+            health = self.ft.request("health")
+            ft_ok = bool(health) and str(health.get("status", "")).lower() in {"ok", "healthy", "running"}
         except RuntimeError:
             pass
         components["freqtrade"] = "HEALTHY" if ft_ok else "CRITICAL"
         components["gateio"] = "UNKNOWN" if not ft_ok else "DEGRADED"
         components["database"] = "HEALTHY" if self.store.writable() else "CRITICAL"
+        components["disk"] = "HEALTHY" if shutil.disk_usage(ROOT).free >= self.config["minimum_disk_free_bytes"] else "CRITICAL"
 
         balance: dict[str, Any] = {}
         profit: dict[str, Any] = {}
@@ -518,6 +555,7 @@ class Supervisor:
         open_trades: list[dict[str, Any]] = []
         closed_trades: list[dict[str, Any]] = []
         opportunities: list[dict[str, Any]] = []
+        whitelist: list[str] = []
         data_health = DataHealth.DISCONNECTED
         last_candle: datetime | None = None
         if ft_ok:
@@ -550,7 +588,10 @@ class Supervisor:
         unrealized = _number(profit.get("profit_all_coin")) - _number(profit.get("profit_closed_coin"))
         daily_rows = daily.get("data", daily.get("daily", [])) if isinstance(daily, dict) else []
         daily_pnl = _number(daily_rows[-1].get("abs_profit")) if daily_rows and isinstance(daily_rows[-1], dict) else 0.0
-        peak = self.store.peak_equity(self.config["initial_equity"])
+        # Persist every observed peak so a transient peak cannot be lost between charts.
+        if components["database"] == "HEALTHY":
+            self.store.set_state("equity_high_water", max(equity, _number(self.store.get_state("equity_high_water", self.config["initial_equity"]))))
+        peak = _number(self.store.get_state("equity_high_water", self.config["initial_equity"]), self.config["initial_equity"])
         drawdown = max(0.0, (peak - equity) / peak) if peak else 0.0
         losses = self._consecutive_losses(closed_trades)
         daily_loss = max(0.0, -daily_pnl / max(equity - daily_pnl, 1.0))
@@ -565,7 +606,21 @@ class Supervisor:
         )
         average_vol = sum(_number(item.get("volatility")) for item in opportunities) / max(len(opportunities), 1)
         leverage = self.risk.leverage(self.config["risk"]["max_leverage"], average_vol, risk_state)
-        entry_allowed = risk_state != RiskState.HALTED
+        hard_reasons = [name for name, status in components.items() if status == "CRITICAL"]
+        entry_allowed = risk_state != RiskState.HALTED and not hard_reasons and data_health == DataHealth.HEALTHY
+        if hard_reasons:
+            risk_state, risk_reason, risk_fraction = RiskState.HALTED, "Hard safety predicate failed: " + ", ".join(hard_reasons), 0.0
+        by_pair = {item.get("pair"): item for item in opportunities}
+        pair_decisions = {
+            pair: {
+                "pair": pair,
+                "entry_allowed": bool(entry_allowed and by_pair.get(pair, {}).get("data_status") == DataHealth.HEALTHY and by_pair.get(pair, {}).get("continuity_ok")),
+                "data_status": str(by_pair.get(pair, {}).get("data_status", DataHealth.RECOVERING)),
+                "continuity_ok": bool(by_pair.get(pair, {}).get("continuity_ok")),
+                "reasons": [] if entry_allowed and by_pair.get(pair, {}).get("continuity_ok") else [str(by_pair.get(pair, {}).get("reason", risk_reason))],
+            }
+            for pair in whitelist
+        }
         bot_status = "RUNNING" if ft_ok and entry_allowed else "DEGRADED" if ft_ok else "OFFLINE"
         if self.manual_halt or (risk_state == RiskState.HALTED and data_health not in {DataHealth.DISCONNECTED, DataHealth.RECOVERING}):
             bot_status = "HALTED"
@@ -582,6 +637,7 @@ class Supervisor:
                 drawdown=drawdown, open_trades=open_trades, opportunities=opportunities,
                 win_rate=win_rate, profit_factor=_number(profit.get("profit_factor")),
                 last_candle=last_candle.isoformat() if last_candle else None,
+                pair_decisions=pair_decisions,
                 last_heartbeat=utc_iso(), components=components,
                 health_loop_count=self.health_loop_count,
                 fee_model={
@@ -603,7 +659,7 @@ class Supervisor:
                 loop=self.health_loop_count,
             )
             self.last_health_signature = signature
-        self._write_runtime(entry_allowed, risk_state, risk_fraction, leverage, risk_reason)
+        self._write_runtime(entry_allowed, risk_state, risk_fraction, leverage, risk_reason, whitelist if ft_ok else [], opportunities)
 
         if time.monotonic() - self.last_equity_at >= self.config["equity_snapshot_seconds"]:
             self.store.equity(equity, available, daily_pnl)
@@ -626,16 +682,18 @@ class Supervisor:
     def _opportunities(self, whitelist: list[str]) -> tuple[list[dict[str, Any]], datetime | None, DataHealth]:
         results: list[dict[str, Any]] = []
         latest: datetime | None = None
-        unsafe_gap = False
-        for pair in whitelist[: self.config["opportunity_scan_pairs"]]:
+        for pair in whitelist:
+            continuity_ok = True
             try:
                 payload = self.ft.request(
                     "pair_candles", params={"pair": pair, "timeframe": self.config["timeframe"], "limit": 2}
                 )
-            except RuntimeError:
+            except RuntimeError as exc:
+                results.append({"pair": pair, "eligible": False, "data_status": DataHealth.DISCONNECTED, "reason": str(exc)})
                 continue
             rows = _rows(payload)
             if not rows:
+                results.append({"pair": pair, "eligible": False, "data_status": DataHealth.RECOVERING, "reason": "No candle rows"})
                 continue
             row = rows[-1]
             candle_time = _datetime(row.get("date", row.get("timestamp")))
@@ -645,7 +703,7 @@ class Supervisor:
                 previous = _datetime(rows[-2].get("date", rows[-2].get("timestamp")))
                 expected = self.config["timeframe_minutes"] * 60
                 if previous and candle_time and not 0 < (candle_time - previous).total_seconds() <= expected * 1.5:
-                    unsafe_gap = True
+                    continuity_ok = False
             score = _number(row.get("opportunity_score"), score_opportunity(row))
             current_price = _number(row.get("close"))
             previous_price = _number(rows[-2].get("close"), current_price) if len(rows) > 1 else current_price
@@ -660,6 +718,9 @@ class Supervisor:
                 "regime": str(row.get("regime", "UNKNOWN")),
                 "preferred_strategy": "AutotradeBaseline",
                 "eligible": bool(row.get("trade_eligible", score >= 50)),
+                "data_status": DataHealth.HEALTHY,
+                "continuity_ok": continuity_ok,
+                "candle_timestamp": candle_time.isoformat() if candle_time else None,
                 "fee_hurdle": _number(
                     row.get("fee_hurdle"),
                     2 * self.config["fees"]["fallback_taker_rate_per_side"] + self.config["fees"]["slippage_buffer_rate"],
@@ -670,7 +731,7 @@ class Supervisor:
             return results, None, DataHealth.RECOVERING
         age = max(0.0, (utc_now() - latest).total_seconds())
         interval = self.config["timeframe_minutes"] * 60
-        if unsafe_gap or age > interval * self.config["stale_after_intervals"]:
+        if age > interval * self.config["stale_after_intervals"]:
             health = DataHealth.STALE
         elif age > interval * self.config["delayed_after_intervals"]:
             health = DataHealth.DELAYED
@@ -689,20 +750,34 @@ class Supervisor:
                 break
         return count
 
-    def _write_runtime(self, allowed: bool, state: RiskState, risk_fraction: float, leverage: float, reason: str) -> None:
+    def _write_runtime(self, allowed: bool, state: RiskState, risk_fraction: float, leverage: float, reason: str, whitelist: list[str] | None = None, opportunities: list[dict[str, Any]] | None = None) -> None:
+        now = time.time()
+        by_pair = {item.get("pair"): item for item in opportunities or []}
+        decisions: dict[str, PairDecision] = {}
+        for pair in whitelist or []:
+            item = by_pair.get(pair, {})
+            candle = _datetime(item.get("candle_timestamp"))
+            age = max(0.0, (utc_now() - candle).total_seconds()) if candle else None
+            pair_ok = bool(allowed and item and item.get("data_status") == DataHealth.HEALTHY and item.get("continuity_ok", False))
+            reasons = () if pair_ok else (str(item.get("reason", "Pair data unverified")),)
+            decisions[pair] = PairDecision(pair, pair_ok, reasons, candle.isoformat() if candle else None, age, bool(item.get("continuity_ok")), str(item.get("data_status", DataHealth.RECOVERING)))
+        decision = SafetyDecision(bool(allowed), (reason,), str(state), max(0.0, float(risk_fraction)), max(1.0, float(leverage)), utc_iso(), now + self.config["runtime_gate_ttl_seconds"], decisions)
         payload = {
             "schema_version": 1,
             "environment": "PAPER",
-            "entry_allowed": bool(allowed),
-            "risk_state": str(state),
-            "risk_fraction": max(0.0, float(risk_fraction)),
-            "leverage": max(1.0, float(leverage)),
+            "entry_allowed": decision.global_entry_allowed,
+            "global_entry_allowed": decision.global_entry_allowed,
+            "global_reasons": list(decision.global_reasons),
+            "risk_state": decision.risk_state,
+            "risk_fraction": decision.risk_fraction,
+            "leverage": decision.leverage_cap,
             "reason": reason,
-            "updated_at": utc_iso(),
-            "valid_until_epoch": time.time() + self.config["runtime_gate_ttl_seconds"],
+            "updated_at": decision.generated_at,
+            "valid_until_epoch": decision.valid_until_epoch,
+            "pair_decisions": {pair: asdict(value) for pair, value in decision.pair_decisions.items()},
         }
         RUNTIME_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temporary = RUNTIME_FILE.with_suffix(".tmp")
+        temporary = RUNTIME_FILE.with_name(f".{RUNTIME_FILE.name}.{threading.get_ident()}.tmp")
         temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(temporary, RUNTIME_FILE)
 
@@ -737,11 +812,15 @@ class Supervisor:
             self.state["next_daily_evaluation"] = f"{date} + 1 day"
 
     def command(self, command: str) -> tuple[int, dict[str, Any]]:
+        with self.refresh_lock:
+            return self._command(command)
+
+    def _command(self, command: str) -> tuple[int, dict[str, Any]]:
         previous = str(self.snapshot()["risk_state"])
         if command == "pause":
             self.paused = True
             self.store.set_state("paused", True)
-            self._try_ft("pause")
+            self._try_ft("stopbuy")
             self.store.audit("TRADING_PAUSED", "Owner paused new entries", previous, "HALTED")
             self._refresh_after_command()
             return 200, {"ok": True, "message": "New entries paused; open trades remain managed"}
@@ -762,7 +841,7 @@ class Supervisor:
             return 200, {"ok": True, "message": "Paper trader stopped and state preserved"}
         if command == "resume":
             current = self.snapshot()
-            if current["data_health"] not in {DataHealth.HEALTHY, DataHealth.DELAYED}:
+            if current["data_health"] != DataHealth.HEALTHY:
                 raise CommandRejected(f"Resume rejected: {current['data_health']}")
             if current["drawdown"] >= self.config["risk"]["halt_drawdown"]:
                 raise CommandRejected("Resume rejected: drawdown remains above the hard limit")

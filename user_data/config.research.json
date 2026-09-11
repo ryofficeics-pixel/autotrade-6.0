@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.freqtrade.io/schema.json",
+  "dry_run": true,
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "stake_currency": "USDT",
+  "stake_amount": "unlimited",
+  "dry_run_wallet": 300,
+  "timeframe": "5m",
+  "strategy": "AutotradeBaseline",
+  "position_adjustment_enable": false,
+  "exchange": {"name": "gate", "key": "", "secret": "", "password": "", "pair_whitelist": []},
+  "pairlists": [{"method": "StaticPairList"}]
+}

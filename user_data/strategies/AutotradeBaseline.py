@@ -192,7 +192,24 @@ class AutotradeBaseline(IStrategy):
         side: str,
         **kwargs,
     ) -> bool:
-        return bool(self._runtime().get("entry_allowed", False))
+        runtime = self._runtime()
+        decision = runtime.get("pair_decisions", {}).get(pair, {})
+        return bool(runtime.get("global_entry_allowed", False) and decision.get("entry_allowed", False))
+
+    def check_entry_timeout(
+        self,
+        pair: str,
+        trade,
+        order,
+        current_time: datetime,
+        **kwargs,
+    ) -> bool:
+        """Cancel only unfilled entry orders once the independent gate closes."""
+        runtime = self._runtime()
+        return not bool(
+            runtime.get("global_entry_allowed", False)
+            and runtime.get("pair_decisions", {}).get(pair, {}).get("entry_allowed", False)
+        )
 
     def custom_stake_amount(
         self,
@@ -208,7 +225,7 @@ class AutotradeBaseline(IStrategy):
         **kwargs,
     ) -> float:
         runtime = self._runtime()
-        if not runtime.get("entry_allowed"):
+        if not runtime.get("global_entry_allowed") or not runtime.get("pair_decisions", {}).get(pair, {}).get("entry_allowed"):
             return 0.0
         equity = self.wallets.get_total_stake_amount()
         planned = equity * float(runtime.get("risk_fraction", 0)) / abs(self.stoploss)

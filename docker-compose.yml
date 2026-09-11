@@ -1,0 +1,16 @@
+services:
+  freqtrade:
+    image: freqtradeorg/freqtrade:2026.7
+    command: trade --config /freqtrade/user_data/config.json --strategy AutotradeBaseline
+    volumes: ["./user_data:/freqtrade/user_data"]
+    ports: ["127.0.0.1:8080:8080"]
+    restart: unless-stopped
+  autotrade-supervisor:
+    image: python:3.12-slim
+    working_dir: /app
+    command: sh -c "pip install --no-cache-dir -r requirements.txt && python autotrade.py serve"
+    volumes: [".:/app"]
+    environment: ["FREQTRADE__API_SERVER__USERNAME", "FREQTRADE__API_SERVER__PASSWORD"]
+    ports: ["127.0.0.1:8765:8765"]
+    depends_on: [freqtrade]
+    restart: unless-stopped

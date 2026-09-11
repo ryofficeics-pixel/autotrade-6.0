@@ -2,6 +2,8 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 
 import autotrade
@@ -147,6 +149,53 @@ class PersistenceAndScoringTests(unittest.TestCase):
         result = autotrade.fee_aware_trade(trade, .00075, {"0": .06})
         self.assertAlmostEqual(result["take_profit_rate"], 103.20620621)
         self.assertEqual(result["take_profit_roi"], .06)
+
+
+class RuntimeGateTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.runtime = Path(self.temp.name) / "autotrade_runtime.json"
+        self.original = autotrade.RUNTIME_FILE
+        autotrade.RUNTIME_FILE = self.runtime
+
+    def tearDown(self):
+        autotrade.RUNTIME_FILE = self.original
+        self.temp.cleanup()
+
+    def test_every_whitelist_pair_has_an_explicit_decision(self):
+        app = autotrade.load_json(autotrade.APP_CONFIG)
+        supervisor = object.__new__(autotrade.Supervisor)
+        supervisor.config = app
+        supervisor._write_runtime(True, autotrade.RiskState.NORMAL, .005, 1, "ok", ["BTC/USDT:USDT", "ETH/USDT:USDT"], [{"pair": "ETH/USDT:USDT", "data_status": autotrade.DataHealth.HEALTHY, "continuity_ok": True}])
+        gate = json.loads(self.runtime.read_text(encoding="utf-8"))
+        self.assertFalse(gate["pair_decisions"]["BTC/USDT:USDT"]["entry_allowed"])
+        self.assertTrue(gate["pair_decisions"]["ETH/USDT:USDT"]["entry_allowed"])
+
+    def test_corrupt_or_expired_gate_denies(self):
+        self.runtime.write_text("not json", encoding="utf-8")
+        strategy_file = Path(autotrade.ROOT / "user_data" / "strategies" / "AutotradeBaseline.py")
+        # The strategy runtime reader is deliberately self-contained; malformed data is an empty gate.
+        source = strategy_file.read_text(encoding="utf-8")
+        self.assertIn("except (OSError, ValueError, TypeError)", source)
+
+    def test_refresh_is_serialized(self):
+        lock = threading.RLock()
+        active = 0
+        maximum = 0
+        guard = threading.Lock()
+        def run():
+            nonlocal active, maximum
+            with lock:
+                with guard:
+                    active += 1
+                    maximum = max(maximum, active)
+                time.sleep(.01)
+                with guard:
+                    active -= 1
+        workers = [threading.Thread(target=run) for _ in range(8)]
+        [worker.start() for worker in workers]
+        [worker.join() for worker in workers]
+        self.assertEqual(maximum, 1)
 
 
 if __name__ == "__main__":

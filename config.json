@@ -15,7 +15,6 @@
   "timeframe_minutes": 5,
   "delayed_after_intervals": 2.0,
   "stale_after_intervals": 3.0,
-  "opportunity_scan_pairs": 8,
   "minimum_disk_free_bytes": 1073741824,
   "research_min_closed_trades": 100,
   "take_profit_schedule": {
