@@ -1,0 +1,5 @@
+# Dashboard UI
+
+The localhost dashboard forces a bundled Open Sans variable font across all UI controls and uses a higher-contrast compact layout tuned for 1280×720 screens. It answers whether the bot is alive, whether entries are allowed, whether data is fresh, current equity/PnL/drawdown, strategy/regime, open paper trades, opportunities, system components, continuous health-loop count, and recent audit events. Open-trade P&L is labeled net, the live ticker/table expose the estimated exchange fee cost, and Active Trades shows the current fee/leverage-aware take-profit level beside the stop-loss level. A continuously scrolling market tape shows current analyzed-pair prices and their latest 5-minute change; it pauses on hover and respects reduced-motion accessibility settings.
+
+Controls are Pause New Entries, Resume Trading, Safe Mode, and guarded Emergency Stop. Resume is server-validated, stays in PAPER, and returns in reduced risk. The heartbeat animation is shown only when a real supervisor timestamp is recent. The page contains no trading logic or secrets.

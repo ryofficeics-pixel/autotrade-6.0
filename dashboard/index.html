@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Autotrade 6.0 — Paper Control</title>
+  <style>
+    @font-face{font-family:'Open Sans';src:url('/assets/OpenSans.ttf') format('truetype');font-style:normal;font-weight:300 800;font-display:swap}
+    :root{color-scheme:dark;--bg:#080c12;--panel:#101720;--line:#2b3b4b;--text:#f1f5fa;--muted:#acb8c5;--cyan:#63efd1;--green:#61e697;--yellow:#ffd060;--red:#ff7185;--blue:#80b1ff;font:15px/1.45 'Open Sans',sans-serif}
+    *{box-sizing:border-box;font-family:'Open Sans',sans-serif}body{margin:0;background:radial-gradient(circle at 80% -20%,#13273a 0,transparent 35%),var(--bg);color:var(--text);font-synthesis:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}button{font:inherit}
+    .shell{max-width:1500px;margin:auto;padding:22px}.top{display:flex;align-items:center;gap:18px;border-bottom:1px solid var(--line);padding:0 0 18px;margin-bottom:18px}.brand{font-size:19px;font-weight:800;letter-spacing:.12em}.brand span{color:var(--cyan)}
+    .status{display:flex;align-items:center;gap:8px;margin-left:auto;font-size:13px;font-weight:800;letter-spacing:.08em}.dot{width:9px;height:9px;border-radius:50%;background:#68717c}.running .dot{background:var(--green);box-shadow:0 0 14px var(--green);animation:pulse 1.5s infinite}.degraded .dot{background:var(--yellow)}.halted .dot{background:var(--red)}@keyframes pulse{50%{opacity:.35}}
+    .paper{border:1px solid #2f7c70;background:#102a27;color:var(--cyan);padding:6px 10px;border-radius:4px;font-size:12px;font-weight:900;letter-spacing:.08em}.grid{display:grid;gap:14px}.metrics{grid-template-columns:repeat(6,minmax(120px,1fr));margin-bottom:14px}.main{grid-template-columns:minmax(0,1.45fr) minmax(330px,.55fr);align-items:start}.split{grid-template-columns:1fr 1fr}.panel,.metric{background:linear-gradient(145deg,rgba(18,26,37,.96),rgba(12,18,26,.96));border:1px solid var(--line);border-radius:8px}.metric{padding:14px 16px;min-height:88px}.label,.eyebrow{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.1em;font-weight:800}.value{font-size:25px;font-weight:760;margin-top:7px;font-variant-numeric:tabular-nums}.sub{color:var(--muted);font-size:12px;margin-top:3px}.positive{color:var(--green)}.negative{color:var(--red)}
+    .panel{padding:16px;margin-bottom:14px;overflow:hidden}.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.11em;margin:0}.tag{font-size:10px;border:1px solid var(--line);border-radius:999px;padding:3px 8px;color:var(--muted)}
+    .ticker{display:flex;align-items:center;gap:18px;min-height:50px;padding:9px 14px;margin:-1px 0 14px;white-space:nowrap;overflow:auto}.ticker-label{position:sticky;left:-14px;align-self:stretch;display:flex;align-items:center;background:var(--panel);border-right:1px solid var(--line);padding-right:14px;color:var(--cyan);font-size:10px;font-weight:900;letter-spacing:.11em}.tick{display:flex;align-items:baseline;gap:9px}.tick .pair{font-size:12px}.tick-price{font-size:17px;font-weight:780}.tick-meta{font-size:11px;color:var(--muted)}
+    .market-tape{display:flex;align-items:center;min-height:42px;padding:0;margin:-5px 0 14px;white-space:nowrap}.market-tape .ticker-label{left:0;z-index:1;padding:0 14px;background:#111b25}.tape-window{overflow:hidden;flex:1;mask-image:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent)}.tape-track{display:flex;width:max-content;animation:tape-run 38s linear infinite}.tape-window:hover .tape-track{animation-play-state:paused}.tape-set{display:flex;align-items:center;gap:28px;padding-right:28px}.tape-item{display:flex;gap:8px;align-items:baseline;font-variant-numeric:tabular-nums}.tape-symbol{font-size:12px;font-weight:800}.tape-price{font-size:14px;font-weight:750}@keyframes tape-run{to{transform:translateX(-50%)}}@media(prefers-reduced-motion:reduce){.tape-track{animation:none}.tape-window{overflow:auto;mask-image:none}.tape-set[aria-hidden="true"]{display:none}}
+    .chart{height:190px;width:100%;display:block}.empty{height:120px;display:grid;place-items:center;color:var(--muted);border:1px dashed var(--line);border-radius:6px}.drawdown{border-color:#58303a}.drawdown .value{font-size:31px}.risk-row{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}.reason{color:var(--muted);max-width:420px;margin-top:6px}.controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.btn{cursor:pointer;border:1px solid var(--line);background:#17212c;color:var(--text);padding:9px 12px;border-radius:5px;font-weight:700}.btn:hover{border-color:#536579}.btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.btn.resume{background:#14392f;border-color:#2d7862;color:#7af1ce}.btn.danger{background:#35161d;border-color:#7a2e3e;color:#ff91a0}.btn:disabled{opacity:.45;cursor:not-allowed}
+    table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;padding:9px 8px;border-bottom:1px solid var(--line)}td{padding:10px 8px;border-bottom:1px solid #1f2d3a;font-variant-numeric:tabular-nums}tr:last-child td{border:0}.scroll{overflow:auto}.pair{font-weight:750}.eligible{color:var(--green)}.blocked{color:var(--red)}
+    .kv{display:grid;grid-template-columns:1fr auto;gap:9px 14px}.kv div:nth-child(odd){color:var(--muted)}.kv div:nth-child(even){font-weight:700;text-align:right}.health-item{display:grid;grid-template-columns:1fr auto;gap:12px;padding:8px 0;border-bottom:1px solid #1b2631}.health-item:last-child{border:0}.health-state{font-size:10px;font-weight:900}.HEALTHY{color:var(--green)}.DEGRADED,.UNKNOWN{color:var(--yellow)}.CRITICAL{color:var(--red)}
+    .notice{position:fixed;right:20px;bottom:20px;max-width:420px;background:#17212c;border:1px solid var(--line);padding:12px 14px;border-radius:6px;box-shadow:0 12px 40px #0008;display:none}.notice.show{display:block}.audit{font-size:11px}.audit-event{display:grid;grid-template-columns:145px 150px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid #1b2631}.audit-event:last-child{border:0}.audit time{color:var(--muted)}
+    @media(min-width:1051px) and (max-height:800px){.shell{padding:12px 16px}.top{padding-bottom:10px;margin-bottom:10px}.grid{gap:10px}.metrics{margin-bottom:10px}.metric{min-height:76px;padding:9px 12px}.value{margin-top:3px}.panel{padding:12px;margin-bottom:10px}.panel-head{margin-bottom:9px}.ticker{min-height:44px;margin-bottom:10px}.chart{height:90px}.controls{margin-top:10px}.health-item{padding:6px 0}}
+    @media(max-width:1050px){.metrics{grid-template-columns:repeat(3,1fr)}.main{grid-template-columns:1fr}}@media(max-width:650px){.shell{padding:14px}.top{flex-wrap:wrap}.status{margin-left:0}.metrics{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}.audit-event{grid-template-columns:1fr}.risk-row{align-items:start;flex-direction:column}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header class="top">
+    <div class="brand">AUTOTRADE <span>6.0</span></div>
+    <div id="status" class="status"><span class="dot"></span><span>OFFLINE</span></div>
+    <div class="paper">PAPER TRADING · REAL ORDERS DISABLED</div>
+  </header>
+
+  <section class="grid metrics" aria-label="Primary metrics">
+    <article class="metric"><div class="label">Equity</div><div class="value" id="equity">—</div><div class="sub" id="available">— available</div></article>
+    <article class="metric"><div class="label">Today</div><div class="value" id="dailyPnl">—</div><div class="sub">3% aspiration · never a quota</div></article>
+    <article class="metric"><div class="label">Total P&amp;L</div><div class="value" id="totalPnl">—</div><div class="sub" id="unrealized">— unrealized</div></article>
+    <article class="metric"><div class="label">Drawdown</div><div class="value" id="drawdownTop">—</div><div class="sub">from observed equity peak</div></article>
+    <article class="metric"><div class="label">Open Trades</div><div class="value" id="openCount">—</div><div class="sub">maximum one in bootstrap</div></article>
+    <article class="metric"><div class="label">Profit Factor</div><div class="value" id="profitFactor">—</div><div class="sub" id="winRate">— win rate</div></article>
+  </section>
+  <section class="panel ticker" aria-label="Open trade live prices">
+    <div class="ticker-label">OPEN TRADE TICKER</div>
+    <div id="priceTicker" class="tick-meta">No open paper trade</div>
+  </section>
+  <section class="panel market-tape" aria-label="Scrolling market price tape">
+    <div class="ticker-label">MARKET TAPE · 5M</div>
+    <div class="tape-window"><div id="marketTape" class="tape-track"><span class="tick-meta">Waiting for market prices</span></div></div>
+  </section>
+
+  <div class="grid main">
+    <div>
+      <section class="panel">
+        <div class="panel-head"><h2>Active trades</h2><span class="tag">Freqtrade dry-run</span></div>
+        <div class="scroll"><table><thead><tr><th>Pair</th><th>Side</th><th>Strategy</th><th>Entry</th><th>Current</th><th>Net P&amp;L</th><th>Fee est.</th><th>Leverage</th><th>Stop</th><th>Take profit</th><th>Status</th></tr></thead><tbody id="trades"></tbody></table></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Equity curve</h2><span class="tag">Observed · paper</span></div>
+        <svg id="chart" class="chart" role="img" aria-label="Paper equity history" viewBox="0 0 900 190" preserveAspectRatio="none"></svg>
+      </section>
+
+      <section class="panel drawdown">
+        <div class="panel-head"><h2>Drawdown / Risk Governor</h2><span class="tag" id="riskTag">HALTED</span></div>
+        <div class="risk-row">
+          <div><div class="eyebrow">Current drawdown</div><div class="value" id="drawdown">—</div><div class="reason" id="riskReason">Waiting for supervisor state.</div></div>
+          <div class="kv"><div>Entry gate</div><div id="entryGate">CLOSED</div><div>Risk / trade</div><div id="riskFraction">—</div><div>Leverage cap</div><div id="leverage">—</div><div>Data</div><div id="dataHealth">—</div></div>
+        </div>
+        <div class="controls" aria-label="Trading controls">
+          <button class="btn resume" data-command="resume">Resume Trading</button>
+          <button class="btn" data-command="pause">Pause New Entries</button>
+          <button class="btn" data-command="safe">Safe Mode</button>
+          <button class="btn danger" data-command="emergency-stop">Emergency Stop</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Opportunity scanner</h2><span class="tag">Native pairlist + analyzed candles</span></div>
+        <div class="scroll"><table><thead><tr><th>Pair</th><th>Score</th><th>Volatility</th><th>Liquidity</th><th>Spread</th><th>Regime</th><th>Strategy</th><th>Eligibility</th></tr></thead><tbody id="opportunities"></tbody></table></div>
+      </section>
+    </div>
+
+    <aside>
+      <section class="panel">
+        <div class="panel-head"><h2>Strategy</h2><span class="tag" id="regime">UNKNOWN</span></div>
+        <div class="kv"><div>Champion</div><div id="champion">—</div><div>Active</div><div id="strategy">—</div><div>Challenger</div><div id="challenger">—</div><div>Confidence</div><div>INSUFFICIENT DATA</div><div>Profile</div><div>PAPER BOOTSTRAP</div></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>System health</h2><span class="tag" id="lastAudit">No audit</span></div>
+        <div id="health"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2>Recent audit</h2><span class="tag">Immutable history</span></div>
+        <div id="audit" class="audit"></div>
+      </section>
+    </aside>
+  </div>
+</main>
+<div id="notice" class="notice" role="status" aria-live="polite"></div>
+<script>
+  const $=id=>document.getElementById(id), money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(n||0)), price=n=>new Intl.NumberFormat('en-US',{maximumFractionDigits:Number(n)<1?8:4}).format(Number(n||0)), pct=n=>`${(Number(n||0)*100).toFixed(2)}%`, esc=v=>String(v??'—').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const tone=(el,n)=>{el.classList.toggle('positive',Number(n)>0);el.classList.toggle('negative',Number(n)<0)};
+  function notice(message,error=false){const el=$('notice');el.textContent=message;el.style.borderColor=error?'var(--red)':'var(--line)';el.classList.add('show');setTimeout(()=>el.classList.remove('show'),4500)}
+  async function get(path){const r=await fetch(path,{cache:'no-store'});if(!r.ok)throw Error(`${path}: ${r.status}`);return r.json()}
+  async function post(command){
+    if(command==='emergency-stop'&&!confirm('Emergency stop paper trading? New entries stop and Freqtrade is asked to stop.'))return;
+    document.querySelectorAll('button').forEach(b=>b.disabled=true);
+    try{const r=await fetch(`/api/${command==='emergency-stop'?'emergency-stop':`trading/${command}`}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const body=await r.json();if(!r.ok)throw Error(body.error||`Command failed: ${r.status}`);notice(body.message);await refresh()}catch(e){notice(e.message,true)}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false)}
+  }
+  document.querySelectorAll('[data-command]').forEach(b=>b.addEventListener('click',()=>post(b.dataset.command)));
+
+  function drawChart(history){const svg=$('chart');if(history.length<2){svg.innerHTML='<text x="450" y="96" text-anchor="middle" fill="#8c9aaa">Equity history will appear after runtime snapshots</text>';return}const values=history.map(x=>Number(x.equity)),min=Math.min(...values),max=Math.max(...values),span=max-min||1,points=values.map((v,i)=>`${i/(values.length-1)*900},${175-(v-min)/span*150}`).join(' ');svg.innerHTML=`<line x1="0" y1="175" x2="900" y2="175" stroke="#23303e"/><polyline points="${points}" fill="none" stroke="#55e5c5" stroke-width="2" vector-effect="non-scaling-stroke"/><text x="4" y="15" fill="#8c9aaa">${esc(money(max))}</text><text x="4" y="185" fill="#8c9aaa">${esc(money(min))}</text>`}
+  function tableEmpty(cols,message){return `<tr><td colspan="${cols}" style="text-align:center;color:var(--muted);padding:26px">${esc(message)}</td></tr>`}
+  function render(state,equity,audit){
+    const heartbeat=state.last_heartbeat?Date.now()-Date.parse(state.last_heartbeat):Infinity,display=heartbeat>15000?'OFFLINE':state.bot_status,status=$('status');status.className=`status ${display.toLowerCase()}`;status.lastElementChild.textContent=display;
+    $('equity').textContent=money(state.equity);$('available').textContent=`${money(state.available)} available`;
+    $('dailyPnl').textContent=money(state.daily_pnl);tone($('dailyPnl'),state.daily_pnl);$('totalPnl').textContent=money(state.total_pnl);tone($('totalPnl'),state.total_pnl);$('unrealized').textContent=`${money(state.unrealized_pnl)} unrealized`;
+    $('drawdownTop').textContent=$('drawdown').textContent=pct(state.drawdown);$('drawdownTop').className=`value ${state.drawdown>0?'negative':''}`;$('openCount').textContent=state.open_trades.length;$('profitFactor').textContent=Number(state.profit_factor||0).toFixed(2);$('winRate').textContent=`${pct(state.win_rate)} win rate`;
+    $('riskTag').textContent=state.risk_state;$('riskReason').textContent=state.risk_reason;$('entryGate').textContent=state.entry_allowed?'OPEN':'CLOSED';$('entryGate').className=state.entry_allowed?'eligible':'blocked';$('riskFraction').textContent=pct(state.risk_fraction);$('leverage').textContent=`${Number(state.leverage_cap||1).toFixed(2)}×`;$('dataHealth').textContent=state.data_health;
+    $('champion').textContent=state.champion;$('strategy').textContent=state.active_strategy;$('challenger').textContent=state.challenger;$('regime').textContent=state.regime;$('lastAudit').textContent=state.last_audit?new Date(state.last_audit).toLocaleTimeString():'No audit';
+    $('priceTicker').outerHTML=`<div id="priceTicker" style="display:flex;gap:24px">${state.open_trades.length?state.open_trades.map(t=>{const entry=Number(t.open_rate||0),current=Number(t.current_rate||entry),move=(entry?(current-entry)/entry:0)*(t.is_short?-1:1),profit=Number(t.net_profit_abs||0),fee=Number(t.estimated_trading_fee_abs||0);return `<div class="tick"><span class="pair">${esc(t.pair)} · ${t.is_short?'SHORT':'LONG'}</span><span class="tick-price">${esc(price(current))}</span><span class="${move<0?'negative':'positive'}">${move<0?'▼':'▲'} ${esc(pct(Math.abs(move)))}</span><span class="tick-meta ${profit<0?'negative':'positive'}">${esc(money(profit))} net · ${esc(money(fee))} fee est.</span></div>`}).join(''):'<span class="tick-meta">No open paper trade · P&amp;L is net of exchange fees and funding</span>'}</div>`;
+    const quotes=state.opportunities.filter(o=>Number(o.current_price)>0),items=quotes.map(o=>{const change=Number(o.price_change||0),symbol=String(o.pair).replace('/USDT:USDT','');return `<span class="tape-item"><span class="tape-symbol">${esc(symbol)}</span><span class="tape-price">${esc(price(o.current_price))}</span><span class="${change<0?'negative':'positive'}">${change<0?'▼':'▲'} ${esc(pct(Math.abs(change)))}</span></span>`}).join('');$('marketTape').innerHTML=items?`<span class="tape-set">${items}</span><span class="tape-set" aria-hidden="true">${items}</span>`:'<span class="tick-meta">Waiting for market prices</span>';
+    $('trades').innerHTML=state.open_trades.length?state.open_trades.map(t=>`<tr><td class="pair">${esc(t.pair)}</td><td>${esc(t.is_short?'SHORT':'LONG')}</td><td>${esc(t.strategy||state.active_strategy)}</td><td>${esc(price(t.open_rate))}</td><td>${esc(price(t.current_rate))}</td><td class="${Number(t.net_profit_abs)<0?'negative':'positive'}">${esc(money(t.net_profit_abs))}</td><td title="${esc(t.fee_source)}">${esc(money(t.estimated_trading_fee_abs))}</td><td>${esc(t.leverage||1)}×</td><td>${esc(price(t.stop_loss_abs||t.stop_loss))}</td><td title="Fee-aware ROI target ${esc(pct(t.take_profit_roi))}">${esc(price(t.take_profit_rate))} · ${esc(pct(t.take_profit_roi))}</td><td>${esc(t.is_open?'OPEN':'CLOSED')}</td></tr>`).join(''):tableEmpty(11,'No open paper trades');
+    $('opportunities').innerHTML=state.opportunities.length?state.opportunities.map(o=>`<tr><td class="pair">${esc(o.pair)}</td><td>${esc(Number(o.score).toFixed(1))}</td><td>${esc(pct(o.volatility))}</td><td>${esc(pct(o.liquidity))}</td><td>${o.spread==null?'Filtered upstream':esc(pct(o.spread))}</td><td>${esc(o.regime)}</td><td>${esc(o.preferred_strategy)}</td><td class="${o.eligible?'eligible':'blocked'}">${o.eligible?'ELIGIBLE':'BLOCKED'}</td></tr>`).join(''):tableEmpty(8,'Waiting for authenticated Freqtrade analyzed candles');
+    $('health').innerHTML=Object.entries(state.components).map(([name,value])=>`<div class="health-item"><span>${esc(name.replaceAll('_',' '))}</span><span class="health-state ${esc(value)}">${esc(value)}</span></div>`).join('')+`<div class="health-item"><span>loop checks</span><span class="health-state HEALTHY">${esc(state.health_loop_count)} · every ${esc(state.health_loop_interval_seconds)}s</span></div>`;
+    $('audit').innerHTML=audit.events.length?audit.events.slice(0,8).map(e=>`<div class="audit-event"><time>${esc(new Date(e.timestamp).toLocaleString())}</time><b>${esc(e.event)}</b><span>${esc(e.reason)}</span></div>`).join(''):'<div class="empty">No audit events</div>';drawChart(equity.history)
+  }
+  async function refresh(){try{const [state,equity,audit]=await Promise.all([get('/api/status'),get('/api/equity'),get('/api/audit?limit=20')]);render(state,equity,audit)}catch(e){$('status').className='status';$('status').lastElementChild.textContent='OFFLINE';notice(e.message,true)}}
+  refresh();setInterval(refresh,5000);
+</script>
+</body>
+</html>
